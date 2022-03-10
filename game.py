@@ -1,18 +1,23 @@
 import pygame as pg
 import time
 
-INTERVAL_TIME = 1 / 30
+FPS_LIMIT     = 60
+INTERVAL_TIME = 1 / FPS_LIMIT
 
 class UI:
 	core = None
-	
 	dpad_map = []
-	
-	u_pressedi_events = {
+
+	ui_pressed_events = {
 		"dpad_0": False,
 		"dpad_1": False,
 		"dpad_2": False,
 		"dpad_3": False
+	}
+	
+	ui_theme = {
+		"dpad_pressed": (255, 255, 157, 50),
+		"dpad_background": (220, 83, 24)
 	}
 	
 	def quit(event):
@@ -21,6 +26,25 @@ class UI:
 	def finger(event):
 		return event.x * core.screen_w, event.y * core.screen_h
 		
+	def pressed(UI, ui_element):
+		return UI.ui_pressed_events[ui_element]
+	
+	def ui_sync_with_entity(UI, entity):
+		if entity is None:
+			pass
+		
+		if UI.pressed(UI, "dpad_0"):
+			entity.mot_x += 5
+			
+		if UI.pressed(UI, "dpad_1"):
+			entity.mot_x -= 5
+		
+		if UI.pressed(UI, "dpad_2"):
+			entity.mot_y += 5
+		
+		if UI.pressed(UI, "dpad_3"):
+			entity.mot_y -= 5
+	
 	def create_dpad(UI, x, y, size):
 		UI.dpad_map = [
 			# Left:
@@ -35,13 +59,29 @@ class UI:
 			# Bottom:
 			[x + size, y + size + size, size, size]
 		]
+		
+	def collide(x, y, map):
+		return x > map[0] and y > map[1] and x < map[0] + map[2] and y < map[1] + map[3]
+	
+	def get_theme(UI, ui_theme, ui_element):
+		return UI.ui_theme[ui_theme + "_pressed"]  if UI.ui_pressed_events[ui_element] else UI.ui_theme[ui_theme + "_background"]
 	
 	def render_dpad(UI, surface):
-		surface.fill((0, 255, 0, 100), UI.dpad_map[0])
-		surface.fill((0, 255, 0, 100), UI.dpad_map[1])
-		surface.fill((0, 255, 0, 100), UI.dpad_map[2])
-		surface.fill((0, 255, 0, 100), UI.dpad_map[3])
-
+		surface.fill(UI.get_theme(UI, "dpad", "dpad_0"), UI.dpad_map[0])
+		surface.fill(UI.get_theme(UI, "dpad", "dpad_1"), UI.dpad_map[1])
+		surface.fill(UI.get_theme(UI, "dpad", "dpad_2"), UI.dpad_map[2])
+		surface.fill(UI.get_theme(UI, "dpad", "dpad_3"), UI.dpad_map[3])
+	
+	def callback_dpad_event(UI, event):
+		if event.type == pg.FINGERDOWN or event.type == pg.FINGERUP:
+			x, y = UI.finger(event)
+			
+			for i in range(0, 4):
+				ui_string = "dpad_" +  str(i)
+				
+				if UI.collide(x, y, UI.dpad_map[i]) or event.type == pg.FINGERUP:
+					UI.ui_pressed_events[ui_string] = event.type == pg.FINGERDOWN;
+	
 class Shape:
 	def __init__(self):
 		self.rect = [0, 0, 0, 0]
@@ -62,12 +102,10 @@ class Entity:
 		self.is_dead = 0
 		self.pos_x = 0
 		self.pos_y = 0
-		self.pos_w = 0
-		self.pos_h = 0
 		self.mot_x = 0
 		self.mot_y = 0
 		self.gravity = 1
-		self.id = 1
+		self.id = 0
 		self.width = 0
 		self.height = 0
 		self.shape_index = 0
@@ -89,7 +127,7 @@ class Entity:
 		self.pos_x = x
 		self.pos_y = y
 	
-	def set_velocity(mx, my):
+	def set_velocity(self, mx, my):
 		self.mot_x = mx
 		self.mot_y = my
 
@@ -97,10 +135,14 @@ class Entity:
 		pass
 	
 	def update(self, world_render):
-		shape = world_render.shape_list[self.shape_index]
+		self.pos_x -= self.mot_x * 0.5
+		self.pos_y -= self.mot_y * 0.5	
 		
+		shape = world_render.shape_list[self.shape_index]
 		shape.update_rect(self.pos_x,  self.pos_y, self.width, self.height);
 
+		self.set_velocity(0, 0)
+	
 class EntityPlayer(Entity):
 	def __init__(self, name, ruid):
 		Entity.__init__(self, name)
@@ -138,12 +180,13 @@ class EntityPlayer(Entity):
 	def set_mana(self, level):
 		self.mana = level
 	
-	def update(self, world_render):
+	def update(self, world_render):	
 		Entity.update(self, world_render)
-	
+		
 class WorldRender:
 	def __init__(self):
 		self.shape_list = []
+		self.camera_x, self.camera_y = 0, 0
 	
 	def add_shape(self, entity):
 		shape = Shape()
@@ -158,7 +201,7 @@ class WorldRender:
 			entity.shape_index = i
 		
 	def index_of(self, entity_id):
-		for i in range(0, len(self.shape_list) - 1):
+		for i in range(0, len(self.shape_list)):
 			if self.shape_list[i].entity_id == entity_id:
 				return i
 		
@@ -174,11 +217,23 @@ class WorldRender:
 	def end_render_world(self):
 		self.shape_list.clear()
 		
+	def set_camera_pos(self, x, y):
+		self.camera_x = x
+		self.camera_y = y
+	
+	def camera_follow_entity(self, entity):
+		self.camera_x = entity.pos_x + (entity.width / 2) - (UI.core.screen_w / 2)
+		self.camera_y = entity.pos_y + (entity.height / 2) - (UI.core.screen_h / 2)
+	
 	def render(self, surface):
 		for shape in self.shape_list:
-			# if shape.update:
-			surface.fill( (244, 85, 92, 10), shape.rect)
-			#	shape.update = False
+			shape.rect[0] -= self.camera_x
+			shape.rect[1] -= self.camera_y
+
+			surface.fill((244, 85, 92, 10), shape.rect)
+
+			shape.rect[0] += self.camera_x
+			shape.rect[1] += self.camera_y
 				
 class World:
 	def __init__(self, name):
@@ -193,9 +248,6 @@ class World:
 		self.id_max = 0
 	
 	def contains(self, entity_or_id):
-		# This return bool or index of entity in list.
-		#
-		
 		if type(entity_or_id) is int:
 				for i in range(0, len(self.entity_list) - 1):
 					entity = self.entity_list[i];
@@ -240,6 +292,8 @@ class AkillsCore:
 		self.player = None
 		self.world = None
 		self.world_render = None
+		self.enable_ui = False
+		self.camera = True
 		
 		self.previous_time = 0
 		self.frames_elapsed = 0
@@ -260,7 +314,7 @@ class AkillsCore:
 		self.player = EntityPlayer(name, ruid)
 		self.player.set_pos(200, 200)
 		self.player.width = 100
-		self.player.height = 100
+		self.player.height = 100	
 	
 	def open_world(self):
 		if self.world == None:
@@ -268,19 +322,33 @@ class AkillsCore:
 
 		if self.player != None:
 			self.player.spawn(self.world)
+
+		dpad_offset = 20
+		dpad_size = 70 * 3
+		
+		UI.create_dpad(UI, x = dpad_offset, y = self.screen_h - dpad_size - dpad_offset, size = 70)
+		self.enable_ui = True
+				
+		x = -200
+		for i in range(0, 56):
+			entity = Entity("eu dou limda" + str(i))
+			entity.set_pos(x, 200)
+			entity.width = 50
+			entity.height = 50
+			
+			self.world.add_entity_direct(entity)
+			x += entity.width
 		
 		self.world_render = WorldRender()
 		self.world_render.define(self.world)
-		
-		UI.create_dpad(UI, 10, 10, 50)
-	
+
 	def prepare_context(self):
 		pg.init()
 		
 		k = pg.display.Info()
 		
-		self.screen_w = 1280
-		self.screen_h = 800
+		self.screen_w = k.current_w
+		self.screen_h = k.current_h
 		
 		self.screen = pg.display.set_mode((self.screen_w, self.screen_h), pg.FULLSCREEN | pg.DOUBLEBUF)
 		
@@ -297,17 +365,18 @@ class AkillsCore:
 			for event in pg.event.get():
 				self.exit = UI.quit(event)
 				
-				if event.type == pg.FINGERDOWN:
-					x, y = UI.finger(event)
-					
-					self.player.set_pos(x, y)
+				if self.enable_ui:
+					UI.callback_dpad_event(UI, event)
 		
 	def render(self):
 		self.screen.fill([190, 190, 190])
 		
 		if self.world_render != None:
+			if self.player != None and self.camera:
+				self.world_render.camera_follow_entity(self.player)
 			self.world_render.render(self.screen)
 			
+		if self.enable_ui:
 			UI.render_dpad(UI, self.screen)
 	
 		# Count FPS.
@@ -320,6 +389,9 @@ class AkillsCore:
 		if self.previous_time > 20:
 			self.fps = self.frames_elapsed
 			self.frames_elapsed = 0
+		
+		if self.enable_ui  and self.player is not None:
+			UI.ui_sync_with_entity(UI, self.player)
 		
 		if self.world is not None:
 			self.world.update(self.world_render)
